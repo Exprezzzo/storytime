@@ -1,4 +1,18 @@
 import Image from "next/image";
+import { createHash } from 'crypto';
+import { db } from './firebase'; // Assuming you have a firebase.js or similar file exporting 'db'
+import { doc, setDoc } from 'firebase/firestore';
+
+async function sealStory(story: any) {
+  const hash = createHash('sha256').update(JSON.stringify(story.content)).digest('hex');
+
+  // Assuming story has an 'id' field
+  const storyRef = doc(db, 'stories', story.id); 
+  await setDoc(storyRef, {
+    seal: { hash: hash }
+  }, { merge: true }); // Use merge: true to avoid overwriting other fields
+}
+
 
 export default function Home() {
   return (
