@@ -64,6 +64,9 @@ export default function Home() {
   // Use useSearchParams directly
   const { useSearchParams } = require('next/navigation');
   const searchParams = useSearchParams();
+  const [isLoadingUser, setIsLoadingUser] = useState(true);
+  const [isLoadingBranding, setIsLoadingBranding] = useState(true);
+  const [isLoadingPrompt, setIsLoadingPrompt] = useState(true);
 
   // Authenticate anonymously on component mount
   useEffect(() => {
@@ -71,6 +74,7 @@ export default function Home() {
     onAuthStateChanged(auth, (user) => {
       if (user) {
         console.log("User signed in anonymously:", user.uid);
+        setIsLoadingUser(false);
         setUserUID(user.uid);
       .catch((error) => {
         console.error("Error signing in anonymously:", error);
@@ -113,6 +117,7 @@ export default function Home() {
   // Get tenant ID from URL and fetch branding
   useEffect(() => {
     const tenant = searchParams.get('tenant');
+    setIsLoadingBranding(true);
     if (tenant) {
       setTenantId(tenant);
       const fetchTenantBranding = async () => {
@@ -121,15 +126,18 @@ export default function Home() {
           const tenantDoc = await getDoc(tenantRef);
           if (tenantDoc.exists() && tenantDoc.data().branding) {
             setTenantBranding(tenantDoc.data().branding as TenantBranding);
-            console.log("Tenant branding fetched:", tenantDoc.data().branding);
           } else {
             console.log("No branding found for tenant:", tenant);
             setTenantBranding(null);
           }
+          setIsLoadingBranding(false);
         } catch (error) {
           console.error("Error fetching tenant branding:", error);
+          setIsLoadingBranding(false);
         }
       };
+      fetchTenantBranding();
+    } else {
       fetchTenantBranding();
     }
   }, []);
@@ -137,11 +145,13 @@ export default function Home() {
   // Fetch user data on authentication
   useEffect(() => {
     if (userUID) {
+      setIsLoadingUser(true);
       const fetchUserData = async () => {
         try {
           const userRef = doc(db, 'users', userUID);
           const userDoc = await getDoc(userRef);
           if (userDoc.exists()) {
+            console.log("User data fetched:", userDoc.data());
             setUserData(userDoc.data());
           } else {
             // Create user document if it doesn't exist (for new anonymous users)
@@ -149,8 +159,12 @@ export default function Home() {
             setUserData({ consentFlags: { research: false }, flags: { freeElderAccess: false } });
           }
         } catch (error) {
+          setIsLoadingUser(false);
           console.error("Error fetching user data:", error);
+        } finally {
+          setIsLoadingUser(false);
         }
+
       };
       fetchUserData();
 
@@ -158,8 +172,6 @@ export default function Home() {
   }, [userUID]);
   // Fetch a random prompt based on the selected domain
   const fetchRandomPrompt = useCallback(async () => {
-    let promptsCollectionPath = `prompts/${selectedDomain}/questions`;
-
     if (tenantId) {
       // Check for tenant-specific prompts
       const tenantPromptsRef = collection(db, `tenants/${tenantId}/prompts/${selectedDomain}/questions`);
@@ -174,6 +186,7 @@ export default function Home() {
       if (!tenantSnapshot.empty) {
         promptsCollectionPath = `tenants/${tenantId}/prompts/${selectedDomain}/questions`;
       }
+      setIsLoadingPrompt(true);
     }
 
     try {
@@ -185,8 +198,11 @@ export default function Home() {
         setCurrentPrompt(snapshot.docs[randomIndex].data() as Prompt);
       } else {
         setCurrentPrompt(null); // No prompts found for this domain
+        setIsLoadingPrompt(false);
       }
     } catch (error) {
+      setIsLoadingPrompt(false);
+
       console.error("Error fetching prompts:", error);
       setCurrentPrompt(null);
     }
@@ -224,6 +240,7 @@ export default function Home() {
       await setDoc(newStoryRef, storyData);
       console.log("Journal entry saved successfully!");
       setJournalEntry(''); // Clear the textarea after saving
+      setIsPublic(false); // Reset public status
     } catch (error) {
       console.error("Error saving journal entry:", error);
     }
@@ -286,8 +303,18 @@ export default function Home() {
 
   return (
     <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
+      <div className="fixed top-0 left-0 w-full bg-yellow-200 text-center text-sm py-1 z-50">
+        This is a pre-release prototype. Some features may be limited.
+      </div>
       <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        {tenantBranding?.logoUrl ? <img src={tenantBranding.logoUrl} alt="Tenant Logo" className="h-10" /> : <Image
+        {isLoadingBranding ? (
+          <div className="animate-pulse h-10 w-32 bg-gray-300 dark:bg-gray-700 rounded"></div>
+        ) : tenantBranding?.logoUrl ? (
+          <img src={tenantBranding.logoUrl} alt="Tenant Logo" className="h-10" />
+        ) : (
+          <Image
+            className="dark:invert"
+            src="/next.svg"
           className="dark:invert"
           src="/next.svg"
           alt="Next.js logo"
@@ -296,6 +323,7 @@ export default function Home() {
           priority
         />
         }
+
         <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]" style={{ color: tenantBranding?.primaryColor }}>
           <li className="mb-2 tracking-[-.01em]">
             Get started by editing{" "}
@@ -311,6 +339,7 @@ export default function Home() {
             Write your journal entry below:
           </li>
           <li>
+            <label htmlFor="domain-select">Select a domain:</label>
             Select a domain:
             <select
               value={selectedDomain}
@@ -318,6 +347,7 @@ export default function Home() {
               className="ml-2 p-1 border rounded dark:bg-gray-800 dark:border-gray-600"
               style={{
                 borderColor: tenantBranding?.primaryColor,
+                outlineColor: tenantBranding?.primaryColor,
               }}
             >
               <option value="personal">Personal</option>
@@ -327,6 +357,7 @@ export default function Home() {
               <option value="marketing">Marketing</option>
             </select>
           </li>
+
         </ol>
 
         {tenantId && (
@@ -344,6 +375,7 @@ export default function Home() {
             value={birthYear}
             onChange={(e) => setBirthYear(e.target.value)}
             placeholder="e.g., 1920"
+            aria-label="Birth Year"
           />
           <button
             onClick={handleSaveBirthYear}
@@ -351,16 +383,20 @@ export default function Home() {
             style={{ backgroundColor: tenantBranding?.primaryColor, color: tenantBranding?.secondaryColor }}>Save Birth Year</button>
         </div>
 
-        {currentPrompt && (
+        {isLoadingPrompt ? (
+          <div className="animate-pulse h-6 w-64 bg-gray-300 dark:bg-gray-700 rounded"></div>
+        ) : currentPrompt && (
           <p className="text-lg italic text-center sm:text-left">{`Memory Cue: "${currentPrompt.promptText}"`}</p>
         )}
 
         <textarea
           className="w-full p-4 border rounded-md dark:bg-gray-800 dark:border-gray-600"
+          aria-label="Journal Entry"
           style={{
             borderColor: tenantBranding?.primaryColor,
+            outlineColor: tenantBranding?.primaryColor,
           }}
-          rows={10}
+          rows={8} // Reduced rows for better initial view on smaller screens
           value={journalEntry}
           onChange={(e) => setJournalEntry(e.target.value)}
         ></textarea>
@@ -368,9 +404,11 @@ export default function Home() {
         <input
           type="text"
           className="w-full p-2 border rounded-md dark:bg-gray-800 dark:border-gray-600"
+          aria-label="Add anchor tags"
           style={{
             borderColor: tenantBranding?.primaryColor,
           }}
+          placeholder="Add anchor tags (press Enter)"
           placeholder="Add anchor tags (press Enter)"
           value={anchorTagInput}
           onChange={(e) => setAnchorTagInput(e.target.value)}
@@ -383,6 +421,7 @@ export default function Home() {
           ))}
         </div>
 
+
         {currentPrompt && (
           <button
             className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
@@ -390,6 +429,7 @@ export default function Home() {
             style={{ backgroundColor: tenantBranding?.primaryColor, color: tenantBranding?.secondaryColor }}
           >Refresh Prompt
           </button>
+
         )}
 
 
@@ -398,6 +438,7 @@ export default function Home() {
             className={`rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 ${isRecording ? 'bg-red-500 text-white hover:bg-red-600' : ''}`}
             onClick={handleVoiceJournaling}
             disabled={!recognition}
+            aria-label={isRecording ? "Stop Recording" : "Start Recording Voice Journal"}
           >
             {isRecording ? <FiMicOff size={20} /> : <FiMic size={20} />}
           </button>
@@ -405,8 +446,14 @@ export default function Home() {
         </div>
         <div className="flex gap-4 items-center flex-col sm:flex-row">
           <div className="flex items-center">
-            <input type="checkbox" id="makePublic" checked={isPublic} onChange={(e) => setIsPublic(e.target.checked)} className="mr-2" />
-            <label htmlFor="makePublic" className="text-sm">Make this story public</label>
+            <input
+              type="checkbox"
+              id="makePublic"
+              checked={isPublic}
+              onChange={(e) => setIsPublic(e.target.checked)}
+              className="mr-2 focus:ring-2 focus:ring-blue-500"
+            />
+            <label htmlFor="makePublic" className="text-sm cursor-pointer">Make this story public</label>
           </div>
           {userData && userData.flags && userData.flags.freeElderAccess && (
             <span className="bg-blue-500 text-white px-3 py-1 rounded-full text-sm">Legacy Member</span>
@@ -416,6 +463,7 @@ export default function Home() {
             href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
             target="_blank"
             rel="noopener noreferrer"
+            aria-label="Deploy to Vercel"
           >
             <Image
               className="dark:invert"
@@ -431,6 +479,7 @@ export default function Home() {
             href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
             target="_blank"
             rel="noopener noreferrer"
+            aria-label="Read Next.js documentation"
           >
             Read our docs
           </a>
@@ -439,6 +488,7 @@ export default function Home() {
             className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
             onClick={handleSaveEntry}
           >
+
             Save Entry
           </button>
 
@@ -448,6 +498,7 @@ export default function Home() {
         <a
           className="flex items-center gap-2 hover:underline hover:underline-offset-4"
             aria-hidden
+            aria-label="Learn Next.js"
             src="/file.svg"
  href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
             alt="File icon"
@@ -461,6 +512,7 @@ export default function Home() {
           href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
           target="_blank"
           rel="noopener noreferrer"
+          aria-label="View Next.js examples"
         >
           <Image
             aria-hidden
@@ -476,6 +528,7 @@ export default function Home() {
           href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
           target="_blank"
           rel="noopener noreferrer"
+          aria-label="Go to nextjs.org"
         >
           <Image
             aria-hidden

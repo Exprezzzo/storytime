@@ -70,7 +70,13 @@ const AdminDashboard: React.FC = () => {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Admin Dashboard</h1>
+      {/* Test Mode Banner */}
+      <div className="bg-yellow-200 text-yellow-800 p-2 text-center text-sm md:text-base">
+        This is a pre-release prototype. Some features may be limited.
+      </div>
+
+      <h1 className="text-2xl font-bold mb-6 mt-4 text-center">Admin Dashboard</h1>
+
       {loading ? (
         <p>Loading metrics...</p>
       ) : (
@@ -78,7 +84,7 @@ const AdminDashboard: React.FC = () => {
           {/* Total Stories by Domain */}
           <div className="bg-white p-6 rounded-lg shadow">
             <h2 className="text-lg font-semibold mb-4">Total Stories by Domain</h2>
-            <ul>
+            <ul role="list" aria-label="Total stories by domain">
               {Object.entries(totalStoriesByDomain).map(([domain, count]) => (
                 <li key={domain} className="flex justify-between py-2 border-b last:border-b-0">
                   <span>{domain}</span>
@@ -91,19 +97,19 @@ const AdminDashboard: React.FC = () => {
           {/* Average Emotion Score */}
           <div className="bg-white p-6 rounded-lg shadow">
             <h2 className="text-lg font-semibold mb-4">Average Emotion Score</h2>
-            <p className="text-3xl font-bold">{averageEmotionScore}</p>
+            <p className="text-3xl font-bold" aria-label={`Average emotion score: ${averageEmotionScore}`}>{averageEmotionScore}</p>
           </div>
 
           {/* Stories Today */}
           <div className="bg-white p-6 rounded-lg shadow">
             <h2 className="text-lg font-semibold mb-4">Stories Today</h2>
-            <p className="text-3xl font-bold">{storiesToday}</p>
+            <p className="text-3xl font-bold" aria-label={`Stories today: ${storiesToday}`}>{storiesToday}</p>
           </div>
 
           {/* Stories This Week */}
           <div className="bg-white p-6 rounded-lg shadow">
             <h2 className="text-lg font-semibold mb-4">Stories This Week</h2>
-            <p className="text-3xl font-bold">{storiesThisWeek}</p>
+            <p className="text-3xl font-bold" aria-label={`Stories this week: ${storiesThisWeek}`}>{storiesThisWeek}</p>
           </div>
         </div>
       )}

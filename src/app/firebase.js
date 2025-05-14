@@ -28,7 +28,10 @@ const db = getFirestore(app);
 // Enable anonymous auth by default
 signInAnonymously(auth)
   .then(() => {
-    // Signed in anonymously
+    // Signed in anonymously. Log for debugging.
+    if (process.env.NODE_ENV !== 'production') {
+      console.log("Signed in anonymously to Firebase.");
+    }
   })
   .catch((error) => {
     console.error("Error signing in anonymously:", error);
