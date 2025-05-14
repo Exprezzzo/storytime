@@ -2,23 +2,292 @@ import Image from "next/image";
 import { createHash } from 'crypto';
 import { db } from './firebase'; // Assuming you have a firebase.js or similar file exporting 'db'
 import { doc, setDoc } from 'firebase/firestore';
+import { useState, useEffect, ChangeEvent, useCallback, useMemo, MouseEvent } from 'react';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getDoc, collection, getDocs } from 'firebase/firestore';
+import { FiMic, FiMicOff } from 'react-icons/fi'; // Import microphone icons
+import { Story } from './firestoreSchemas'; // Import Story schema
 
-async function sealStory(story: any) {
-  const hash = createHash('sha256').update(JSON.stringify(story.content)).digest('hex');
-
-  // Assuming story has an 'id' field
-  const storyRef = doc(db, 'stories', story.id); 
-  await setDoc(storyRef, {
-    seal: { hash: hash }
-  }, { merge: true }); // Use merge: true to avoid overwriting other fields
+interface Prompt {
+  promptText: string;
+  category: string;
+  tags: string[];
+  language: string;
 }
 
+type Domain = "personal" | "health" | "education" | "legal" | "marketing";
+
+// Basic sentiment analysis function
+function getEmotionScore(text: string): number {
+  // This is a very basic implementation. A real-world scenario would use a more sophisticated library or API.
+  const positiveWords = ['happy', 'joy', 'love', 'great', 'good', 'wonderful', 'amazing', 'excited'];
+  const negativeWords = ['sad', 'angry', 'bad', 'terrible', 'horrible', 'frustrated', 'depressed'];
+
+  let score = 0;
+  const words = text.toLowerCase().split(/\W+/);
+
+  words.forEach(word => {
+    if (positiveWords.includes(word)) score++;
+    else if (negativeWords.includes(word)) score--;
+  });
+
+  // Map score to a 1-5 scale (very basic mapping)
+  if (score > 2) return 5;
+  if (score > 0) return 4;
+  if (score === 0) return 3;
+  if (score < 0 && score > -3) return 2;
+  return 1;
+}
+
+interface TenantBranding {
+  logoUrl?: string;
+  primaryColor?: string;
+  secondaryColor?: string;
+  // Add other branding properties as needed
+}
 
 export default function Home() {
+  const [journalEntry, setJournalEntry] = useState(''); // State for the journal entry text
+  const [userUID, setUserUID] = useState<string | null>(null); // State to hold the authenticated user's UID
+  const [isRecording, setIsRecording] = useState(false); // State to track recording status
+  const [recognition, setRecognition] = useState<SpeechRecognition | null>(null); // State to hold the SpeechRecognition instance
+  const [anchorTagInput, setAnchorTagInput] = useState(''); // State for the anchor tag input
+  const [selectedDomain, setSelectedDomain] = useState<Domain>('personal'); // State for the selected domain
+  const [anchorTags, setAnchorTags] = useState<string[]>([]); // State to hold the list of anchor tags
+  const [currentPrompt, setCurrentPrompt] = useState<Prompt | null>(null); // State to hold the current prompt
+  const [birthYear, setBirthYear] = useState<string>(''); // State for birth year input
+  const [userData, setUserData] = useState<any>(null); // State to hold user data from Firestore
+  const [tenantId, setTenantId] = useState<string | null>(null); // State to hold the tenant ID
+  const [tenantBranding, setTenantBranding] = useState<TenantBranding | null>(null); // State to hold tenant branding data
+  const [isPublic, setIsPublic] = useState(false); // State for the "Make this story public" checkbox
+
+  // Use useSearchParams directly
+  const { useSearchParams } = require('next/navigation');
+  const searchParams = useSearchParams();
+
+  // Authenticate anonymously on component mount
+  useEffect(() => {
+    const auth = getAuth();
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        console.log("User signed in anonymously:", user.uid);
+        setUserUID(user.uid);
+      .catch((error) => {
+        console.error("Error signing in anonymously:", error);
+      });
+
+    // Initialize SpeechRecognition
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognizer = new SpeechRecognition();
+      recognizer.continuous = true;
+      recognizer.interimResults = true;
+      recognizer.lang = 'en-US'; // Set language
+
+      recognizer.onresult = (event) => {
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+
+        setJournalEntry((prevEntry) => prevEntry + finalTranscript); // Append final transcript
+      };
+
+      recognizer.onerror = (event) => {
+        console.error('Speech recognition error', event);
+        setIsRecording(false);
+      };
+
+      setRecognition(recognizer);
+    } else {
+      console.error('Speech recognition not supported in this browser.');
+    }
+  }, []);
+
+  // Get tenant ID from URL and fetch branding
+  useEffect(() => {
+    const tenant = searchParams.get('tenant');
+    if (tenant) {
+      setTenantId(tenant);
+      const fetchTenantBranding = async () => {
+        try {
+          const tenantRef = doc(db, 'tenants', tenant);
+          const tenantDoc = await getDoc(tenantRef);
+          if (tenantDoc.exists() && tenantDoc.data().branding) {
+            setTenantBranding(tenantDoc.data().branding as TenantBranding);
+            console.log("Tenant branding fetched:", tenantDoc.data().branding);
+          } else {
+            console.log("No branding found for tenant:", tenant);
+            setTenantBranding(null);
+          }
+        } catch (error) {
+          console.error("Error fetching tenant branding:", error);
+        }
+      };
+      fetchTenantBranding();
+    }
+  }, []);
+
+  // Fetch user data on authentication
+  useEffect(() => {
+    if (userUID) {
+      const fetchUserData = async () => {
+        try {
+          const userRef = doc(db, 'users', userUID);
+          const userDoc = await getDoc(userRef);
+          if (userDoc.exists()) {
+            setUserData(userDoc.data());
+          } else {
+            // Create user document if it doesn't exist (for new anonymous users)
+            await setDoc(userRef, { consentFlags: { research: false }, flags: { freeElderAccess: false } });
+            setUserData({ consentFlags: { research: false }, flags: { freeElderAccess: false } });
+          }
+        } catch (error) {
+          console.error("Error fetching user data:", error);
+        }
+      };
+      fetchUserData();
+
+    }
+  }, [userUID]);
+  // Fetch a random prompt based on the selected domain
+  const fetchRandomPrompt = useCallback(async () => {
+    let promptsCollectionPath = `prompts/${selectedDomain}/questions`;
+
+    if (tenantId) {
+      // Check for tenant-specific prompts
+      const tenantPromptsRef = collection(db, `tenants/${tenantId}/prompts/${selectedDomain}/questions`);
+      const tenantSnapshot = await getDocs(tenantPromptsRef);
+      const snapshot = await getDocs(promptsRef);
+      if (!snapshot.empty) {
+        const randomIndex = Math.floor(Math.random() * snapshot.docs.length);
+        setCurrentPrompt(snapshot.docs[randomIndex].data() as Prompt);
+      } else {
+        setCurrentPrompt(null); // No prompts found for this domain
+      }
+      if (!tenantSnapshot.empty) {
+        promptsCollectionPath = `tenants/${tenantId}/prompts/${selectedDomain}/questions`;
+      }
+    }
+
+    try {
+      const promptsRef = collection(db, promptsCollectionPath);
+      const snapshot = await getDocs(promptsRef);
+
+      if (!snapshot.empty) {
+        const randomIndex = Math.floor(Math.random() * snapshot.docs.length);
+        setCurrentPrompt(snapshot.docs[randomIndex].data() as Prompt);
+      } else {
+        setCurrentPrompt(null); // No prompts found for this domain
+      }
+    } catch (error) {
+      console.error("Error fetching prompts:", error);
+      setCurrentPrompt(null);
+    }
+  }, [selectedDomain]); // Dependency array ensures this runs when selectedDomain changes
+
+  // Fetch prompt when domain changes
+  useEffect(() => {
+    fetchRandomPrompt();
+  }, [selectedDomain, fetchRandomPrompt]);
+
+  const handleRefreshPrompt = () => {
+    fetchRandomPrompt();
+  };
+
+
+  const handleSaveEntry = async () => {
+    const emotionScore = getEmotionScore(journalEntry);
+    let tagsToSave = [...anchorTags]; // Start with user-added tags
+
+    if (currentPrompt && currentPrompt.tags) {
+      // Append prompt tags and ensure uniqueness
+      tagsToSave = Array.from(new Set([...tagsToSave, ...currentPrompt.tags]));
+    }
+
+    const storyData: Story = {
+      authorUID: userUID!, // Use the authenticated user's UID
+      text: journalEntry,
+      emotionScore: emotionScore,
+      anchorTags: tagsToSave,
+ isPublic: isPublic, // Set public status from state
+      seal: { hash: '', proof: '' } // Placeholder seal
+
+    }; // Closing the storyData object definition
+      const newStoryRef = doc(db, 'stories', userUID + '_' + Date.now()); // Simple unique ID for now
+      await setDoc(newStoryRef, storyData);
+      console.log("Journal entry saved successfully!");
+      setJournalEntry(''); // Clear the textarea after saving
+    } catch (error) {
+      console.error("Error saving journal entry:", error);
+    }
+  };
+
+  const handleVoiceJournaling = () => {
+    if (!recognition) {
+      console.error('Speech recognition not initialized.');
+      return;
+    }
+
+    if (isRecording) {
+      recognition.stop();
+      setIsRecording(false);
+      console.log('Speech recognition stopped.');
+    } else {
+      recognition.start();
+      setIsRecording(true);
+      console.log('Speech recognition started.');
+      setJournalEntry(journalEntry + ' '); // Add a space before starting new transcription
+    }
+  };
+
+  const handleSaveBirthYear = async () => {
+    if (!userUID) {
+      console.error("User not authenticated.");
+      return;
+    }
+
+    const year = parseInt(birthYear, 10);
+    if (isNaN(year)) {
+      console.error("Invalid birth year.");
+      return;
+    }
+
+    const freeElderAccess = year < 1935;
+
+    try {
+      const userRef = doc(db, 'users', userUID);
+      await setDoc(userRef, {
+        flags: { freeElderAccess: freeElderAccess }
+      }, { merge: true }); // Use merge: true to avoid overwriting other fields
+      console.log("Birth year saved and freeElderAccess flag set:", freeElderAccess);
+    } catch (error) {
+      console.error("Error saving birth year:", error);
+    }
+  };
+
+  const handleDomainChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    setSelectedDomain(event.target.value as Domain);
+  };
+
+  const handleAddTag = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && anchorTagInput.trim() !== '') {
+      setAnchorTags([...anchorTags, anchorTagInput.trim()]);
+      setAnchorTagInput('');
+      e.preventDefault(); // Prevent form submission
+    }
+  };
+
   return (
     <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
       <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
+        {tenantBranding?.logoUrl ? <img src={tenantBranding.logoUrl} alt="Tenant Logo" className="h-10" /> : <Image
           className="dark:invert"
           src="/next.svg"
           alt="Next.js logo"
@@ -26,7 +295,8 @@ export default function Home() {
           height={38}
           priority
         />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
+        }
+        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]" style={{ color: tenantBranding?.primaryColor }}>
           <li className="mb-2 tracking-[-.01em]">
             Get started by editing{" "}
             <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
@@ -37,9 +307,110 @@ export default function Home() {
           <li className="tracking-[-.01em]">
             Save and see your changes instantly.
           </li>
+          <li>
+            Write your journal entry below:
+          </li>
+          <li>
+            Select a domain:
+            <select
+              value={selectedDomain}
+              onChange={handleDomainChange}
+              className="ml-2 p-1 border rounded dark:bg-gray-800 dark:border-gray-600"
+              style={{
+                borderColor: tenantBranding?.primaryColor,
+              }}
+            >
+              <option value="personal">Personal</option>
+              <option value="health">Health</option>
+              <option value="education">Education</option>
+              <option value="legal">Legal</option>
+              <option value="marketing">Marketing</option>
+            </select>
+          </li>
         </ol>
 
+        {tenantId && (
+          <p className="text-sm text-gray-600 dark:text-gray-400" style={{ color: tenantBranding?.secondaryColor }}>
+            Tenant: {tenantId}
+          </p>
+        )}
+
+        <div className="flex gap-4 items-center" style={{ color: tenantBranding?.secondaryColor }}>
+          <label htmlFor="birthYear">Birth Year:</label> {/* Added closing label tag */}
+          <input
+            type="number"
+            id="birthYear"
+            className="p-2 border border-gray-300 rounded-md dark:bg-gray-800 dark:border-gray-600"
+            value={birthYear}
+            onChange={(e) => setBirthYear(e.target.value)}
+            placeholder="e.g., 1920"
+          />
+          <button
+            onClick={handleSaveBirthYear}
+            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
+            style={{ backgroundColor: tenantBranding?.primaryColor, color: tenantBranding?.secondaryColor }}>Save Birth Year</button>
+        </div>
+
+        {currentPrompt && (
+          <p className="text-lg italic text-center sm:text-left">{`Memory Cue: "${currentPrompt.promptText}"`}</p>
+        )}
+
+        <textarea
+          className="w-full p-4 border rounded-md dark:bg-gray-800 dark:border-gray-600"
+          style={{
+            borderColor: tenantBranding?.primaryColor,
+          }}
+          rows={10}
+          value={journalEntry}
+          onChange={(e) => setJournalEntry(e.target.value)}
+        ></textarea>
+
+        <input
+          type="text"
+          className="w-full p-2 border rounded-md dark:bg-gray-800 dark:border-gray-600"
+          style={{
+            borderColor: tenantBranding?.primaryColor,
+          }}
+          placeholder="Add anchor tags (press Enter)"
+          value={anchorTagInput}
+          onChange={(e) => setAnchorTagInput(e.target.value)}
+          onKeyDown={handleAddTag}
+        />
+
+        <div className="flex flex-wrap gap-2">
+          {anchorTags.map((tag, index) => (
+            <span key={index} className="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded-full text-sm">{tag}</span>
+          ))}
+        </div>
+
+        {currentPrompt && (
+          <button
+            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
+            onClick={handleRefreshPrompt}
+            style={{ backgroundColor: tenantBranding?.primaryColor, color: tenantBranding?.secondaryColor }}
+          >Refresh Prompt
+          </button>
+        )}
+
+
+        <div className="flex gap-4 items-center">
+          <button
+            className={`rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 ${isRecording ? 'bg-red-500 text-white hover:bg-red-600' : ''}`}
+            onClick={handleVoiceJournaling}
+            disabled={!recognition}
+          >
+            {isRecording ? <FiMicOff size={20} /> : <FiMic size={20} />}
+          </button>
+
+        </div>
         <div className="flex gap-4 items-center flex-col sm:flex-row">
+          <div className="flex items-center">
+            <input type="checkbox" id="makePublic" checked={isPublic} onChange={(e) => setIsPublic(e.target.checked)} className="mr-2" />
+            <label htmlFor="makePublic" className="text-sm">Make this story public</label>
+          </div>
+          {userData && userData.flags && userData.flags.freeElderAccess && (
+            <span className="bg-blue-500 text-white px-3 py-1 rounded-full text-sm">Legacy Member</span>
+          )}
           <a
             className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
             href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
@@ -63,18 +434,22 @@ export default function Home() {
           >
             Read our docs
           </a>
+
+          <button
+            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
+            onClick={handleSaveEntry}
+          >
+            Save Entry
+          </button>
+
+
         </div>
-      </main>
       <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
         <a
           className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
             aria-hidden
             src="/file.svg"
+ href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
             alt="File icon"
             width={16}
             height={16}
