@@ -123,6 +123,7 @@ export default function ProfilePage() {
         const dateA = a.createdAt instanceof Date ? a.createdAt.getTime() : (a.createdAt as any)?.toDate().getTime() || 0;
         const dateB = b.createdAt instanceof Date ? b.createdAt.getTime() : (b.createdAt as any)?.toDate().getTime() || 0;
         return dateA - dateB;
+      }); // Added missing closing curly brace here
     }
 
     return storiesToGroup;

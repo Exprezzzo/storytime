@@ -1,3 +1,5 @@
+'use client';
+
 import Image from "next/image";
 import { createHash } from 'crypto';
 import { db } from './firebase'; // Assuming you have a firebase.js or similar file exporting 'db'
@@ -72,11 +74,17 @@ export default function Home() {
   useEffect(() => {
     const auth = getAuth();
     onAuthStateChanged(auth, (user) => {
-      if (user) {
+      if (user) { // User is signed in, do nothing
         console.log("User signed in anonymously:", user.uid);
         setIsLoadingUser(false);
         setUserUID(user.uid);
-      .catch((error) => {
+      } else { // User is signed out, sign in anonymously
+        signInAnonymously(auth);
+      }
+    }); // Removed .catch here
+
+    // Moved .catch to chain after signInAnonymously
+    auth.signInAnonymously(auth).catch((error) => {
         console.error("Error signing in anonymously:", error);
       });
 
@@ -219,6 +227,7 @@ export default function Home() {
 
 
   const handleSaveEntry = async () => {
+    try {
     const emotionScore = getEmotionScore(journalEntry);
     let tagsToSave = [...anchorTags]; // Start with user-added tags
 
@@ -233,10 +242,9 @@ export default function Home() {
       emotionScore: emotionScore,
       anchorTags: tagsToSave,
  isPublic: isPublic, // Set public status from state
-      seal: { hash: '', proof: '' } // Placeholder seal
+      seal: { hash: '', proof: '' }, // Placeholder seal
 
     }; // Closing the storyData object definition
-      const newStoryRef = doc(db, 'stories', userUID + '_' + Date.now()); // Simple unique ID for now
       await setDoc(newStoryRef, storyData);
       console.log("Journal entry saved successfully!");
       setJournalEntry(''); // Clear the textarea after saving
